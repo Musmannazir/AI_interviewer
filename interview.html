@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Live AI Interview</title>
+    <style>
+        body { font-family: Arial, sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background-color: #f4f4f4; }
+        .container { text-align: center; background: white; padding: 20px; border-radius: 10px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
+        .progress { width: 100%; background-color: #ddd; border-radius: 5px; margin: 10px 0; }
+        .progress-bar { height: 10px; background-color: #007bff; border-radius: 5px; width: 0; transition: width 0.4s ease; }
+        button { padding: 10px 20px; margin: 5px; cursor: pointer; border: none; border-radius: 5px; }
+        #startSpeaking, #nextQuestion { background-color: #007bff; color: white; }
+        #stopSpeaking { background-color: #dc3545; color: white; }
+        #endInterview { background-color: #ffc107; color: white; }
+        #videoFeed { width: 200px; height: 200px; border: 1px solid #ccc; margin: 10px 0; }
+        #questionDisplay { margin: 20px 0; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>Live AI Interview</h2>
+        <div class="progress">
+            <div id="progressBar" class="progress-bar"></div>
+        </div>
+        <div id="questionDisplay"></div>
+        <video id="videoFeed" autoplay muted></video>
+        <div>
+            <button id="startSpeaking">Start Speaking</button>
+            <button id="stopSpeaking" style="display: none;">Stop Speaking</button>
+            <button id="nextQuestion" style="display: none;">Next Question</button>
+            <button id="endInterview">End Interview</button>
+        </div>
+        <div id="feedbackDisplay"></div>
+    </div>
+
+    <script>
+        const video = document.getElementById('videoFeed');
+        const startSpeaking = document.getElementById('startSpeaking');
+        const stopSpeaking = document.getElementById('stopSpeaking');
+        const nextQuestion = document.getElementById('nextQuestion');
+        const endInterview = document.getElementById('endInterview');
+        const questionDisplay = document.getElementById('questionDisplay');
+        const feedbackDisplay = document.getElementById('feedbackDisplay');
+        const progressBar = document.getElementById('progressBar');
+        let mediaRecorder;
+        let audioChunks = [];
+        let currentQuestionIndex = 0;
+
+        // Access webcam
+        navigator.mediaDevices.getUserMedia({ video: true, audio: true })
+            .then(stream => {
+                video.srcObject = stream;
+            })
+            .catch(err => console.error('Error accessing media devices:', err));
+
+        function updateProgress() {
+            fetch('/get_current_question')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.progress) {
+                        progressBar.style.width = `${data.progress}%`;
+                    }
+                });
+        }
+
+        function loadQuestion() {
+            fetch('/get_current_question')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.end) {
+                        questionDisplay.textContent = 'Interview Completed!';
+                        startSpeaking.style.display = 'none';
+                        stopSpeaking.style.display = 'none';
+                        nextQuestion.style.display = 'none';
+                        endInterview.style.display = 'block';
+                    } else {
+                        questionDisplay.textContent = `Q${data.index}/${data.total}: ${data.question}`;
+                        progressBar.style.width = `${data.progress}%`;
+                        startSpeaking.style.display = 'block';
+                        stopSpeaking.style.display = 'none';
+                        nextQuestion.style.display = 'none';
+                        endInterview.style.display = 'block';
+                    }
+                });
+        }
+
+        startSpeaking.onclick = () => {
+            navigator.mediaDevices.getUserMedia({ audio: true })
+                .then(stream => {
+                    mediaRecorder = new MediaRecorder(stream);
+                    mediaRecorder.ondataavailable = event => audioChunks.push(event.data);
+                    mediaRecorder.onstop = () => {
+                        const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+                        const formData = new FormData();
+                        fetch('/get_current_question')
+                            .then(response => response.json())
+                            .then(data => {
+                                formData.append('question', data.question);
+                                formData.append('audio', audioBlob, 'recording.wav');
+                                fetch('/process_audio', { method: 'POST', body: formData })
+                                    .then(response => response.json())
+                                    .then(data => {
+                                        feedbackDisplay.textContent = `Transcript: ${data.transcript}\nFeedback: ${data.feedback}`;
+                                        stopSpeaking.style.display = 'none';
+                                        nextQuestion.style.display = 'block';
+                                    });
+                            });
+                        audioChunks = [];
+                        stream.getTracks().forEach(track => track.stop());
+                    };
+                    mediaRecorder.start();
+                    startSpeaking.style.display = 'none';
+                    stopSpeaking.style.display = 'block';
+                });
+        };
+
+        stopSpeaking.onclick = () => {
+            if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                mediaRecorder.stop();
+            }
+        };
+
+        nextQuestion.onclick = () => {
+            fetch('/next_question')
+                .then(response => response.json())
+                .then(() => {
+                    loadQuestion();
+                    feedbackDisplay.textContent = '';
+                    startSpeaking.style.display = 'block';
+                    nextQuestion.style.display = 'none';
+                });
+        };
+
+        endInterview.onclick = () => {
+            fetch('/end_interview')
+                .then(response => response.json())
+                .then(data => {
+                    questionDisplay.textContent = 'Interview Ended. Results: ' + JSON.stringify(data.results);
+                    startSpeaking.style.display = 'none';
+                    stopSpeaking.style.display = 'none';
+                    nextQuestion.style.display = 'none';
+                    endInterview.style.display = 'none';
+                });
+        };
+
+        // Load initial question
+        loadQuestion();
+        updateProgress();
+    </script>
+</body>
+</html>
